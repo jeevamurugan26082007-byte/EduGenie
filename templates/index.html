@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EduGenie – your AI study tutor</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Edu<mark>Genie</mark></h1>
+    <p>Ask, learn, test yourself. Pick a task below.</p>
+  </header>
+
+  <nav id="tabs" role="tablist">
+    <button class="on" data-task="qa">Ask a question</button>
+    <button data-task="explain">Explain a topic</button>
+    <button data-task="quiz">Take a quiz</button>
+    <button data-task="summarize">Summarize text</button>
+    <button data-task="path">Learning path</button>
+  </nav>
+
+  <form id="form">
+    <label for="input" id="label"></label>
+    <textarea id="input" rows="4" required></textarea>
+    <button type="submit" id="go"></button>
+  </form>
+
+  <section id="result" aria-live="polite" hidden></section>
+</main>
+<script>
+const TASKS = {
+  qa:        {label: "What do you want to know?", hint: "Which is the largest ocean?", btn: "Get answer"},
+  explain:   {label: "Which concept should I explain?", hint: "Photosynthesis", btn: "Explain it"},
+  quiz:      {label: "Quiz topic, or paste a passage", hint: "Pythagoras theorem", btn: "Generate quiz"},
+  summarize: {label: "Paste the text to shorten", hint: "Paste a long paragraph here…", btn: "Summarize"},
+  path:      {label: "What do you want to learn?", hint: "SQL", btn: "Build my path"},
+};
+let task = "qa";
+const $ = id => document.getElementById(id);
+const out = $("result");
+
+function setTask(t) {
+  task = t;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.task === t));
+  $("label").textContent = TASKS[t].label;
+  $("input").placeholder = TASKS[t].hint;
+  $("go").textContent = TASKS[t].btn;
+  out.hidden = true;
+}
+$("tabs").onclick = e => e.target.dataset.task && setTask(e.target.dataset.task);
+
+async function call(t, v) {
+  const post = (url, body) => fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const q = encodeURIComponent(v);
+  const r = {
+    qa: () => fetch(`/qa?question=${q}`),
+    explain: () => post("/explain", {topic: v}),
+    quiz: () => post("/quiz", {text: v}),
+    summarize: () => post("/summarize", {text: v}),
+    path: () => fetch(`/learn/recommendations?topic=${q}`),
+  }[t]();
+  const res = await r, data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Something went wrong");
+  return data;
+}
+
+const md = s => DOMPurify.sanitize(marked.parse(s));
+
+function renderQuiz(quiz) {
+  out.innerHTML = "";
+  let right = 0, done = 0;
+  const score = document.createElement("p");
+  score.className = "score";
+  quiz.forEach((q, i) => {
+    const box = document.createElement("fieldset");
+    const lg = document.createElement("legend");
+    lg.textContent = `Q${i + 1}. ${q.question}`;
+    box.append(lg);
+    q.options.forEach(opt => {
+      const l = document.createElement("label");
+      const r = document.createElement("input");
+      r.type = "radio"; r.name = "q" + i; r.value = opt;
+      l.append(r, " " + opt);
+      box.append(l);
+    });
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = "Check answer"; b.className = "small";
+    const fb = document.createElement("p");
+    b.onclick = () => {
+      const pick = box.querySelector("input:checked");
+      if (!pick) { fb.textContent = "Choose an option first."; fb.className = "bad"; return; }
+      const ok = pick.value === q.answer;
+      fb.textContent = ok ? "Correct!" : `Incorrect. Correct answer: ${q.answer}`;
+      fb.className = ok ? "good" : "bad";
+      box.querySelectorAll("input").forEach(x => x.disabled = true);
+      b.disabled = true; done++; if (ok) right++;
+      if (done === quiz.length) score.textContent = `You scored ${right} out of ${quiz.length}.`;
+    };
+    box.append(b, fb);
+    out.append(box);
+  });
+  out.append(score);
+}
+
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  const v = $("input").value.trim();
+  if (!v) return;
+  $("go").disabled = true; $("go").textContent = "Thinking…";
+  out.hidden = false; out.className = ""; out.textContent = "Working on it…";
+  try {
+    const d = await call(task, v);
+    if (task === "quiz") renderQuiz(d.quiz);
+    else out.innerHTML = md(d.answer || d.explanation || d.summary || d.recommendation);
+  } catch (err) {
+    out.className = "error"; out.textContent = err.message;
+  } finally {
+    $("go").disabled = false; $("go").textContent = TASKS[task].btn;
+  }
+};
+setTask("qa");
+</script>
+</body>
+</html>
